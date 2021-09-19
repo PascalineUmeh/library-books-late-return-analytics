@@ -3,7 +3,7 @@ Library data analysis and model to predict the likelihood of a late return of an
 
 
 # Step by Step Guide to the files
-- Customer_Late_Book_Return_Analysis.sql
+- Library_Books_Checkout_and_Late_Return_Analysis.R and Customer_Late_Book_Return_Analysis.sql (Both are same analysis script for R and sql version).
 This file contains the step by step query on the data load on oracle sql server.
 The script shows a breakdown of executed queries from the library data set used for the dashboard in LIBRARY_BOOKS_LATE_RETURN_ANALYTICS_REPORT.pptx file.
 Information each chart on the slides has a corresponding script provided in Customer_Late_Book_Return_Analysis.sql file for your review.
