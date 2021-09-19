@@ -50,7 +50,7 @@ customers %>%
          BIRTH_DATE = mdy(BIRTH_DATE),
          EDUCATION=str_squish(str_to_title(EDUCATION)),
          OCCUPATION=str_squish(str_to_title(OCCUPATION))
-         ) -> customers
+  ) -> customers
 
 customers %>% view()
 
@@ -58,7 +58,7 @@ customers %>% view()
 checkout %>% 
   mutate(DATE_CHECKOUT = mdy(DATE_CHECKOUT), 
          DATE_RETURNED = mdy(DATE_RETURNED)
-         ) -> checkout
+  ) -> checkout
 
 customers %>% 
   left_join(checkout, c('ID'='PATRON_ID..CUSTOMERS_ID.')) %>% 
@@ -76,7 +76,6 @@ customers %>%
 dim(merged_data)
 
 View(merged_data)
-
 ## Data preparation and Feature engineering
 # Creating duration for borrowing period and Customer's age as at today
 merged_data %>% 
@@ -119,7 +118,6 @@ merged_data %>%
 merged_data %>% 
   mutate(BOOK_AGE = (Sys.Date()-PUBLISHEDDATE)/365) %>% 
   mutate(BOOK_AGE = as.numeric(BOOK_AGE)) -> merged_data
-
 ## Building the model
 df <- merged_data
 df$LATE_RETURN <- as.factor(df$LATE_RETURN )
@@ -151,7 +149,7 @@ windows(25,20)
 densityplot(mice_imputes)
 
 new_df <- Imputed_data
-  
+
 new_df$LATE_RETURN <- ifelse(new_df$LATE_RETURN == 1, "Yes","No")
 new_df$LATE_RETURN <- as.factor(new_df$LATE_RETURN)
 
@@ -277,7 +275,7 @@ xgboost_tune %>% show_best("roc_auc") %>% glimpse()
 best_tune_xgb <- xgboost_tune %>% select_best("roc_auc")
 final_model <- finalize_workflow(xgboost_workflow, best_tune_xgb)
 
-## creating a support vector (svm) model
+## creating a support vector model
 tidy_svm <- svm_rbf(cost = tune(),rbf_sigma = tune()) %>%
   set_mode("classification") %>%
   set_engine("kernlab")
@@ -423,42 +421,3 @@ data.frame(prep =predict(final_model,sample_test),
 
 
 names(books)
-
-# Book analysis
-# Number of available books
-books %>% 
-  select(ID) %>% 
-  distinct() %>% 
-  count()
-
-# Number of books by category
-books %>% 
-  select(CATEGORIES) %>% 
-  mutate(CATEGORIES=case_when(CATEGORIES == '' ~ 'Others', 
-                              T ~ CATEGORIES)
-         ) %>% 
-  count(CATEGORIES) %>% 
-  arrange(desc(n))
-
-# Average price of books by category
-books %>% 
-  select(CATEGORIES, PRICE) %>% 
-  mutate(CATEGORIES=case_when(CATEGORIES == '' ~ 'Others', 
-                              T ~ CATEGORIES)
-  ) %>% 
-  group_by(CATEGORIES) %>% 
-  summarize(Avg_price = mean(PRICE, na.rm=T))
-
-# Customer analysis
-customers %>% 
-  select(ID) %>% 
-  distinct() %>% 
-  count()
-
-# Distribution by gender
-customers %>% 
-  select(GENDER) %>% 
-  count(GENDER)
-
-str(books)
-customers %>% View()
