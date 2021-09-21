@@ -1,0 +1,498 @@
+---
+title: "Library Late Book Return Predictive Model"
+author: "Pascaline Umeh"
+date: "9/20/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+getwd()
+setwd('C:/Users/HP User/Downloads')
+```
+
+ 
+
+```{r}
+###Installation and Importation of needed packages and libraries.
+#install.packages(c('tidyverse','tidymodels'))
+#install.packages('lubridate')
+#install.packages('rmarkdown')
+#install.packages('mice')
+#install.packages('ranger')
+#install.packages('tidyposterior')
+```
+```{r}
+library(lubridate)
+library(tidyverse)
+library(tidymodels)
+library(mice)
+library(ranger)
+library(tidyposterior)
+```
+```{r}
+books <- read.csv('books.csv')
+checkout <- read.csv("checkouts.csv")
+customers <- read.csv("customers.csv")
+libraries <- read.csv("libraries.csv")
+```
+
+ 
+
+```{r}
+books <- books %>% 
+  select(-X)
+
+ 
+
+checkout %>% 
+  select(-starts_with('X')) -> checkout
+
+ 
+
+customers %>% 
+  select(-starts_with('X')) -> customers
+
+ 
+
+libraries %>% 
+  select(-starts_with('X')) -> libraries
+```
+
+ 
+
+```{r}
+books %>% 
+  mutate(PUBLISHEDDATE = mdy(PUBLISHEDDATE)) -> books
+```
+
+ 
+
+```{r}
+names(books) <- c('Book_ID',names(books)[-1])
+names(libraries) <- c('Library_ID',names(libraries)[-1])
+```
+```{r}
+customers %>% 
+  mutate(GENDER = str_squish(GENDER),
+         BIRTH_DATE = mdy(BIRTH_DATE),
+         EDUCATION=str_squish(str_to_title(EDUCATION)),
+         OCCUPATION=str_squish(str_to_title(OCCUPATION))
+  ) -> customers
+```
+
+ 
+
+### Formatting columns in Checkout data
+```{r}
+checkout %>% 
+  mutate(DATE_CHECKOUT = mdy(DATE_CHECKOUT), 
+         DATE_RETURNED = mdy(DATE_RETURNED)
+  ) -> checkout
+```
+
+ 
+
+### Merging the tables
+```{r}
+customers %>% 
+  left_join(checkout, c('ID'='PATRON_ID..CUSTOMERS_ID.')) %>% 
+  left_join(books, c('BOOKS_ID'='Book_ID')) %>% 
+  left_join(libraries, c('LIBRARY_ID'='Library_ID')) %>% 
+  rename(CUST_NAME = NAME.x, CUST_ADDR=STREET_ADDRESS.x,
+         CUST_CITY = CITY.x,
+         LIB_NAME = NAME.y, LIB_ADDR = STREET_ADDRESS.y,
+         LIB_CITY = CITY.y, CUST_STATE=STATE) %>% 
+  select(ID, CUST_NAME, CUST_CITY, CUST_STATE, CUST_CITY,
+         BIRTH_DATE, GENDER, EDUCATION, OCCUPATION, BOOKS_ID,
+         LIBRARY_ID, DATE_CHECKOUT, DATE_RETURNED, AUTHORS,
+         PUBLISHER, PUBLISHEDDATE, CATEGORIES, PRICE, PAGES) -> merged_data
+```
+
+## Data preparation and Feature engineering
+### Creating duration for borrowing period and Customer's age as at return date
+```{r}
+merged_data %>% 
+  mutate(Duration = DATE_RETURNED - DATE_CHECKOUT,
+         Age = floor((DATE_RETURNED - BIRTH_DATE)/365)) -> merged_data
+```
+
+### Formatting the Age and Duration column
+```{r}
+merged_data %>% 
+  mutate(Duration=as.numeric(Duration),
+         Age = as.numeric(Age)) -> merged_data
+```
+
+### Creating age of book in years
+```{r}
+merged_data %>% 
+  mutate(BOOK_AGE = (DATE_RETURNED-PUBLISHEDDATE)/365) %>% 
+  mutate(BOOK_AGE = as.numeric(BOOK_AGE)) -> merged_data
+```
+
+# Creating late return status variable
+```{r}
+merged_data %>% 
+  mutate(Duration = case_when(Duration == 0 ~ 1/NA, 
+                              T ~ Duration)
+  ) -> merged_data
+
+ 
+
+merged_data %>% 
+  mutate(LATE_RETURN = case_when(Duration > 28 ~ 1, 
+                                 is.na(Duration) ~ 1/NA, T ~ 0)
+  ) -> merged_data
+```
+
+# Building the model
+```{r}
+df <- merged_data
+df$LATE_RETURN <- as.factor(df$LATE_RETURN )
+```
+
+### lets tidy the column format
+```{r}
+df <- df %>%
+  mutate_if(is.character, factor)
+```
+
+### Excluding irrelevant variables
+```{r}
+new_df <- df %>%
+  select(-ID,-CUST_NAME,-BIRTH_DATE,-BOOKS_ID,
+         -PUBLISHEDDATE, -LIBRARY_ID, -DATE_CHECKOUT,
+         -DATE_RETURNED, -Duration)
+```
+
+### Formating the target variables
+```{r}
+new_df$LATE_RETURN <- ifelse(new_df$LATE_RETURN == 1, "Yes","No")
+new_df$LATE_RETURN <- as.factor(new_df$LATE_RETURN)
+```
+
+### Imputing missing values using mice
+```{r}
+set.seed(2021)
+mice_imputes = mice(new_df, m=5, maxit = 5)
+```
+
+```{r}
+#Imputed dataset
+Imputed_data=complete(mice_imputes,5)
+
+new_df <- Imputed_data
+```
+
+### Data Partitioning
+```{r}
+set.seed(10021)
+splits <- initial_split(new_df, prop = 0.75, strata = LATE_RETURN)
+train <- training(splits)
+test <- testing(splits)
+```
+
+
+### Creating CV folds
+```{r}
+set.seed(1024)
+folds <- vfold_cv(train, 2)
+```
+
+ 
+
+### Creating Recipe
+```{r}
+tidy_rec <- 
+  recipe(formula = LATE_RETURN ~ ., data = train) %>% 
+  step_range(all_numeric()) %>%
+  step_other(CUST_CITY,CUST_STATE,EDUCATION,
+             OCCUPATION,AUTHORS,PUBLISHER,CATEGORIES,
+             threshold = 0.1) %>%
+  step_dummy(all_nominal(),-LATE_RETURN) %>%
+  step_impute_knn(all_predictors()) 
+
+ 
+
+tidy_rec %>% prep() %>% juice() -> keras_df
+
+ 
+
+tidy_rec %>% prep() %>% bake(test) -> keras_test
+```
+
+ 
+
+### Creating a baseline model - logistic regression
+```{r}
+baseline_spec <- 
+  logistic_reg() %>% 
+  set_mode("classification") %>% 
+  set_engine("glm") 
+```
+
+ 
+
+### Creating its workflow
+```{r}
+baseline_workflow <- 
+  workflow() %>% 
+  add_recipe(tidy_rec) %>% 
+  add_model(baseline_spec) 
+```
+
+ 
+
+### Fitting it on the folds
+```{r}
+baseline_oc <- 
+  fit_resamples(baseline_workflow, resamples = folds)
+```
+
+ 
+
+### Exploring the results
+```{r}
+baseline_oc %>% show_best("roc_auc")
+```
+
+### Selecting best
+```{r}
+best_tune_log <- baseline_oc %>% select_best("roc_auc")
+
+final_log_wf <- finalize_workflow(baseline_workflow,
+                                  best_tune_log)
+```
+ 
+
+### creating the randomforest model
+```{r}
+ranger_spec <- 
+  rand_forest(mtry = tune(), min_n = tune(), trees = 1000) %>% 
+  set_mode("classification") %>% 
+  set_engine("ranger") 
+```
+
+ 
+
+### randomforest workflow
+```{r}
+ranger_workflow <- 
+  workflow() %>% 
+  add_recipe(tidy_rec) %>% 
+  add_model(ranger_spec) 
+```
+
+ 
+
+### tuning the randomforest model
+```{r}
+set.seed(72829)
+ranger_tune <-
+  tune_grid(ranger_workflow, 
+            resamples = folds, 
+            grid = 10,
+            control = control_grid(save_pred = TRUE, 
+                                   allow_par = TRUE))
+```
+
+### exploring tuned results
+```{r}
+ranger_tune %>% unnest(.metrics)
+ranger_tune %>% show_best("roc_auc")
+```
+
+### Visualizing the model
+```{r}
+autoplot(ranger_tune)
+```
+### Compiling results
+```{r}
+best_tune_ranger <- ranger_tune %>% select_best("roc_auc")
+
+final_ranger_wf <- finalize_workflow(ranger_workflow,
+                                     best_tune_ranger)
+```
+### Creating a recipe for xgboost model
+```{r}
+xgboost_recipe <- 
+  recipe(formula = LATE_RETURN ~ ., data = train) %>% 
+  step_normalize(all_numeric()) %>%
+  step_other(CUST_CITY,CUST_STATE,EDUCATION,
+             OCCUPATION,AUTHORS,PUBLISHER,CATEGORIES, 
+             threshold = 0.1) %>%
+  step_dummy(all_nominal(),-LATE_RETURN, one_hot = TRUE) %>%
+  #step_downsample(LATE_RETURN) %>%
+  step_impute_knn(all_predictors())
+```
+### Creating the model
+```{r}
+xgboost_spec <- 
+  boost_tree(trees = tune(), min_n = tune(), tree_depth = tune(), 
+             learn_rate = tune(), 
+             loss_reduction = tune(), sample_size = tune()) %>% 
+  set_mode("classification") %>% 
+  set_engine("xgboost") 
+```
+### Creating its workflow
+```{r}
+xgboost_workflow <- 
+  workflow() %>% 
+  add_recipe(xgboost_recipe) %>% 
+  add_model(xgboost_spec) 
+
+```
+### Tuning the model
+```{r}
+set.seed(75238)
+xgboost_tune <-
+  tune_grid(xgboost_workflow,
+            resamples = folds,
+            grid = 7,
+            control = control_grid(save_pred = TRUE, 
+                                   allow_par = TRUE))
+```
+### Exploring results
+```{r}
+xgboost_tune %>% show_best("roc_auc") %>% glimpse()
+```
+### Finalizing model
+```{r}
+best_tune_xgb <- xgboost_tune %>% select_best("roc_auc")
+final_model <- finalize_workflow(xgboost_workflow, best_tune_xgb)
+```
+
+### creating a support vector model
+```{r}
+tidy_svm <- svm_rbf(cost = tune(),rbf_sigma = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+```
+
+### Creating a workflow for the svm model
+```{r}
+svm_wf <- workflow() %>%
+  add_recipe(xgboost_recipe) %>%
+  add_model(tidy_svm)
+```
+
+### Tuning the SVM model
+```{r}
+set.seed(3242)
+svm_tune <- tune_grid(
+  svm_wf,
+  resamples = folds,
+  grid = 10,
+  control = control_grid(allow_par = TRUE, 
+                         save_pred = TRUE)
+)
+```
+
+### Exploring results
+```{r}
+svm_tune %>% unnest(.metrics)
+svm_tune %>% show_best("accuracy")
+```
+### Finalizing model
+```{r}
+best_tune_svm <- svm_tune %>% select_best("accuracy")
+final_svm_model <- finalize_workflow(svm_wf, best_tune_svm)
+```
+### creating a tibble of our models.
+```{r}
+model_res <- tibble(model = list(baseline_oc, 
+                                 ranger_tune, 
+                                 xgboost_tune, svm_tune),
+                    model_name = c("logistic","ranger","xgboost","svm"))
+```
+
+### A function to extract metrics
+```{r}
+collect_metrics <- function(model){
+  model %>%
+    select(id, .metrics) %>%
+    unnest(.metrics)
+}
+```
+### Extracting metrics
+```{r}
+model_res <- model_res %>%
+  mutate(metric = map(model, collect_metrics))
+```
+### Visualizing metrics
+```{r}
+model_res %>% 
+  select(model_name,metric) %>%
+  unnest(metric) %>%
+  ggplot(aes(model_name, .estimate))+
+  geom_boxplot(alpha = 0.8, fill = "midnightblue", col = "black")+
+  facet_wrap(~.metric, scales = "free_y")
+```
+### Visualizing metric by folds
+```{r}
+model_res %>% 
+  select(model_name,metric) %>%
+  unnest(metric) %>%
+  ggplot(aes(model_name, .estimate, col = id, group = id))+
+  geom_line(alpha = 0.8)+
+  facet_wrap(~.metric, scales = "free_y")
+```
+### Density plot of metrics
+```{r}
+model_res %>% 
+  select(model_name,metric) %>%
+  unnest(metric) %>%
+  ggplot(aes(.estimate, col = model_name, fill = model_name))+
+  geom_density(alpha = 0.1)+
+  facet_wrap(~.metric, scales = "free_y")
+```
+### getting a table summary of the metrics
+```{r}
+model_res <- model_res %>% 
+  select(model_name,metric) %>%
+  unnest(metric)
+
+model_res %>%
+  group_by(model_name, .metric) %>%
+  summarise(mean = mean(.estimate))%>%
+  arrange(desc(mean))
+```
+
+We can now say that the Random forest model is the best performing model among the three
+
+Random forest model seems to be the best model this fits the model on the entire training set and evaluates on the test set
+
+### Fitting the final model
+```{r}
+final_fit_ranger <- last_fit(final_ranger_wf, splits)
+```
+### Evaluating the final model
+```{r}
+final_fit_ranger %>%
+  collect_predictions() %>%
+  conf_mat(LATE_RETURN, .pred_class)
+```
+### Collecting metrics
+```{r}
+final_fit_ranger %>% unnest(.metrics)
+```
+
+### Saving the final model
+```{r}
+final_model <- fit(final_ranger_wf, new_df)
+
+saveRDS(final_model, "BillUps_model.rds")
+```
+
+### Testing the model on a random 50 samples
+```{r}
+sample_test <- slice_sample(new_df, n=100)
+
+data.frame(prep =predict(final_model,sample_test), 
+           actual = sample_test$LATE_RETURN )
+```
+
