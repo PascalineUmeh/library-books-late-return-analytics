@@ -18,5 +18,9 @@ This file contains the R script showing the steps by step codes executed in the 
 Each step in the script has comments that explains the purpose of each code and the process follwed in building the model. The four models considered in this excercise are:
 Logistic regression, Random forest, XG Bosst and SVM.
 
-- Book_Late_Return_Predictive_Model.rds:
-This is the best model (random forest) out of the four models that was considered in this analysis.
+- BillUps_model.rds:
+The BillUps_model.rds file is the saved model. This is the best model (random forest) out of the four models that was considered in this analysis.
+
+- The Late_Return_Predictive_Model_Markdown_Script.Rmd file is the Markdown that has the script for the model. 
+
+- The Book_Late_Return_Predictive_Model.html file holds the analysis of the predictive model in html format.
